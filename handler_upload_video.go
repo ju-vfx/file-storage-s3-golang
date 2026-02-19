@@ -1,16 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -99,6 +96,19 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		ratioPrefix = "other"
 	}
 
+	processedFilePath, err := processVideoForFastStart(outputFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Unable to process video", err)
+		return
+	}
+
+	processedFile, err := os.Open(processedFilePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Unable to read processed file", err)
+		return
+	}
+	defer processedFile.Close()
+
 	fileFormat := strings.Split(mediaType, "/")[1]
 	bytes := make([]byte, 32)
 	rand.Read(bytes)
@@ -108,7 +118,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &fileNameWithExt,
-		Body:        outputFile,
+		Body:        processedFile,
 		ContentType: &mediaType,
 	})
 
@@ -121,42 +131,4 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-}
-
-func getVideoAspectRatio(filePath string) (string, error) {
-	cmd := exec.Command("ffprobe", "-v", "error", "-print_format", "json", "-show_streams", filePath)
-	buffer := &bytes.Buffer{}
-	cmd.Stdout = buffer
-	err := cmd.Run()
-	if err != nil {
-		return "", fmt.Errorf("Could not run command: %v", err)
-	}
-
-	type videoData struct {
-		Streams []struct {
-			Width  int `json:"width"`
-			Height int `json:"height"`
-		} `json:"streams"`
-	}
-
-	data := videoData{}
-	err = json.Unmarshal(buffer.Bytes(), &data)
-	if err != nil {
-		return "", fmt.Errorf("Could not read video data: %v", err)
-	}
-
-	width := data.Streams[0].Width
-	height := data.Streams[0].Height
-
-	aspect := float32(width) / float32(height)
-	var aspectString string
-	if aspect > 1.5 && aspect < 2 {
-		aspectString = "16:9"
-	} else if aspect < 0.6 && aspect > 0.5 {
-		aspectString = "9:16"
-	} else {
-		aspectString = "other"
-	}
-
-	return aspectString, nil
 }
