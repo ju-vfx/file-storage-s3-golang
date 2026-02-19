@@ -5,6 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
+	"time"
+
+	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 )
 
 func getVideoAspectRatio(filePath string) (string, error) {
@@ -56,4 +60,20 @@ func processVideoForFastStart(filePath string) (string, error) {
 	}
 
 	return outputFilePath, nil
+}
+
+func (cfg *apiConfig) dbVideoToSignedVideo(video database.Video) (database.Video, error) {
+	if video.VideoURL == nil {
+		return video, nil
+	}
+	videoURLParts := strings.Split(*video.VideoURL, ",")
+	if len(videoURLParts) != 2 {
+		return database.Video{}, fmt.Errorf("Video URL not containing bucket and key")
+	}
+	presignedURL, err := generatePresignedURL(cfg.s3Client, videoURLParts[0], videoURLParts[1], time.Hour)
+	if err != nil {
+		return database.Video{}, err
+	}
+	video.VideoURL = &presignedURL
+	return video, nil
 }
